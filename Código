@@ -1,0 +1,50 @@
+#include <ESP_I2S.h>
+
+const int PINO_BCLK = 2;
+const int PINO_WS   = 3;
+const int PINO_SD   = 1;
+const int PINO_LED  = 10;
+
+const int TAXA_AMOSTRAGEM = 16000;
+const int N_AMOSTRAS = 512;            // ~32 ms por bloco
+const float LIMITE = 200000.0;         // acima disso = barulho alto (ajuste!)
+const int MANTER_LED_MS = 500;         // LED fica aceso um pouco após o barulho
+
+I2SClass i2s;
+int32_t amostras[N_AMOSTRAS];
+unsigned long ultimoBarulho = 0;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PINO_LED, OUTPUT);
+
+  i2s.setPins(PINO_BCLK, PINO_WS, -1, PINO_SD);  // sem saída, só entrada de dados
+  if (!i2s.begin(I2S_MODE_STD, TAXA_AMOSTRAGEM,
+                 I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT)) {
+    Serial.println("Falha ao iniciar o I2S. Confira as ligações.");
+    while (true) delay(1000);
+  }
+}
+
+void loop() {
+  size_t bytes = i2s.readBytes((char*)amostras, sizeof(amostras));
+  int n = bytes / sizeof(int32_t);
+  if (n == 0) return;
+
+  // o INMP441 entrega 24 bits dentro de 32; deslocamos 8 bits
+  double soma = 0;
+  for (int i = 0; i < n; i++) soma += (amostras[i] >> 8);
+  double media = soma / n;               // remove o nível DC
+
+  double somaQuad = 0;
+  for (int i = 0; i < n; i++) {
+    double v = (amostras[i] >> 8) - media;
+    somaQuad += v * v;
+  }
+  float rms = sqrt(somaQuad / n);        // quanto maior, mais alto o som
+
+  Serial.println(rms);
+
+  if (rms > LIMITE) ultimoBarulho = millis();
+  digitalWrite(PINO_LED, (millis() - ultimoBarulho < MANTER_LED_MS) ? HIGH : LOW);
+}
